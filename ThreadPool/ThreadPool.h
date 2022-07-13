@@ -4,6 +4,7 @@
 #include <type_traits>
 #include <thread>
 #include <mutex>
+#include <condition_variable>
 #include <atomic>
 #include <queue>
 #include <unordered_map>
@@ -72,7 +73,7 @@ public:
     ~ThreadPool() {
         quite = true;
         tasksCv.notify_all();
-        for (int i = 0; i < threads.size(); ++i) {
+        for (size_t i = 0; i < threads.size(); ++i) {
             threads[i].join();
         }
     }
