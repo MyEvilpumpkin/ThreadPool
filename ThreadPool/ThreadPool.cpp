@@ -3,69 +3,55 @@
 #include <thread>
 #include <chrono>
 #include <mutex>
-#include <future>
 #include <type_traits>
 #include <unordered_map>
-#include <unordered_set>
 #include <any>
 #include <atomic>
-#include <variant>
-#include <cassert>
-#include <map>
-#include <utility>
 #include <functional>
 
 class Task {
 public:
     template <typename ReturnType, typename ...Types, typename ...Args>
-    Task(ReturnType(*function)(Types...), Args&&... args) : isVoid{ std::is_void_v<ReturnType> } {
+    Task(const size_t id, ReturnType(*function)(Types...), Args&&... args) : _id(id) {
         if constexpr (std::is_void_v<ReturnType>) {
-            voidFunction = std::bind(function, args...);
-            anyFunction = []()->int { return 0; };
+            const std::function<void()>& voidFunction = std::bind(function, args...);
+            _function = [voidFunction]() {
+                voidFunction();
+                return std::any();
+            };
         }
         else {
-            voidFunction = []()->void {};
-            anyFunction = std::bind(function, args...);
+            _function = std::bind(function, args...);
         }
     }
 
-    void operator() () {
-        voidFunction();
-        anyFunctionResult = anyFunction();
+    std::any operator() () const {
+        return _function();
     }
 
-    bool hasResult() {
-        return !isVoid;
-    }
-
-    std::any getResult() const {
-        assert(!isVoid);
-        assert(anyFunctionResult.has_value());
-        return anyFunctionResult;
+    size_t id() const {
+        return _id;
     }
 
 private:
-    std::function<void()> voidFunction;
-    std::function<std::any()> anyFunction;
-    std::any anyFunctionResult;
-    bool isVoid;
+    size_t _id;
+    std::function<std::any()> _function;
 };
 
-enum class TaskStatus {
+enum TaskStatus {
     NEW,
     RUNNING,
     COMPLETED
 };
 
 struct TaskInfo {
-    TaskStatus status = TaskStatus::NEW;
+    TaskStatus status;
     std::any result;
 };
 
-
 class ThreadPool {
 public:
-    ThreadPool(const size_t nThreads) {
+    ThreadPool(const size_t nThreads) : quite(false), newTaskId(0), nCompletedTasks(0) {
         threads.reserve(nThreads);
         for (size_t i = 0; i < nThreads; ++i) {
             threads.emplace_back(&ThreadPool::run, this);
@@ -74,15 +60,15 @@ public:
 
     template <typename ReturnType, typename ...Types, typename ...Args>
     size_t addTask(ReturnType(*function)(Types...), Args&&... args) {
+        std::unique_lock<std::mutex> tasksLock(tasksMtx);
         const size_t taskId = newTaskId++;
+        tasks.emplace(taskId, function, std::forward<Args>(args)...);
+        tasksLock.unlock();
 
         std::unique_lock<std::mutex> tasksInfoLock(tasksInfoMtx);
-        tasksInfo[taskId] = TaskInfo();
+        tasksInfo[taskId].status = TaskStatus::NEW;
         tasksInfoLock.unlock();
 
-        std::unique_lock<std::mutex> tasksLock(tasksMtx);
-        tasks.emplace(Task(function, std::forward<Args>(args)...), taskId);
-        tasksLock.unlock();
         tasksCv.notify_one();
 
         return taskId;
@@ -136,24 +122,23 @@ private:
             std::unique_lock<std::mutex> tasksLock(tasksMtx);
             tasksCv.wait(tasksLock, [this]()->bool { return !tasks.empty() || quite; });
 
-            std::optional<std::pair<Task, size_t>> task;
+            std::optional<Task> optionalTask;
 
             if (!tasks.empty() && !quite) {
-                task = std::move(tasks.front());
+                optionalTask = std::move(tasks.front());
                 tasks.pop();
             }
 
             tasksLock.unlock();
             
-            if (task) {
-
-                task->first();
+            if (optionalTask) {
+                const Task& task = *optionalTask;
+                const size_t taskId = task.id();
+                const std::any& result = task();
 
                 std::unique_lock<std::mutex> tasksInfoLock(tasksInfoMtx);
-                if (task->first.hasResult()) {
-                    tasksInfo[task->second].result = task->first.getResult();
-                }
-                tasksInfo[task->second].status = TaskStatus::COMPLETED;
+                tasksInfo[taskId].result = result;
+                tasksInfo[taskId].status = TaskStatus::COMPLETED;
                 ++nCompletedTasks;
                 tasksInfoLock.unlock();
 
@@ -165,17 +150,17 @@ private:
 
     std::vector<std::thread> threads;
 
-    std::queue<std::pair<Task, size_t>> tasks;
-    std::mutex tasksMtx;
+    std::queue<Task> tasks;
     std::condition_variable tasksCv;
+    std::mutex tasksMtx;
 
     std::unordered_map<size_t, TaskInfo> tasksInfo;
     std::condition_variable tasksInfoCv;
     std::mutex tasksInfoMtx;
 
-    std::atomic<bool> quite{ false };
-    std::atomic<size_t> newTaskId{ 0 };
-    std::atomic<size_t> nCompletedTasks{ 0 };
+    std::atomic<bool> quite;
+    std::atomic<size_t> newTaskId;
+    std::atomic<size_t> nCompletedTasks;
 };
 
 int int_sum(int a, int b) {
