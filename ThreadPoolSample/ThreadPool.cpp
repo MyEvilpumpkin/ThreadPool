@@ -36,7 +36,7 @@ int main() {
     t.wait(1);
     std::cout << c << std::endl;
 
-    //t.waitAll(); // waiting for task with id 2
+    t.waitAll(); // waiting for task with id 2
 
     std::cout << "All tasks completed..." << std::endl;
 
