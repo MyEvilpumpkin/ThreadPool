@@ -1,53 +1,15 @@
 #include <iostream>
-#include <queue>
-#include <thread>
 #include <chrono>
-#include <mutex>
+
 #include <type_traits>
+#include <thread>
+#include <mutex>
+#include <atomic>
+#include <queue>
 #include <unordered_map>
 #include <any>
-#include <atomic>
+#include <optional>
 #include <functional>
-
-class Task {
-public:
-    template <typename ReturnType, typename ...Types, typename ...Args>
-    Task(const size_t id, ReturnType(*function)(Types...), Args&&... args) : _id(id) {
-        if constexpr (std::is_void_v<ReturnType>) {
-            const std::function<void()>& voidFunction = std::bind(function, args...);
-            _function = [voidFunction]() {
-                voidFunction();
-                return std::any();
-            };
-        }
-        else {
-            _function = std::bind(function, args...);
-        }
-    }
-
-    std::any operator() () const {
-        return _function();
-    }
-
-    size_t id() const {
-        return _id;
-    }
-
-private:
-    size_t _id;
-    std::function<std::any()> _function;
-};
-
-enum TaskStatus {
-    NEW,
-    RUNNING,
-    COMPLETED
-};
-
-struct TaskInfo {
-    TaskStatus status;
-    std::any result;
-};
 
 class ThreadPool {
 public:
@@ -66,7 +28,7 @@ public:
         tasksLock.unlock();
 
         std::unique_lock<std::mutex> tasksInfoLock(tasksInfoMtx);
-        tasksInfo[taskId].status = TaskStatus::NEW;
+        tasksInfo[taskId].status = TaskInfo::TaskStatus::NEW;
         tasksInfoLock.unlock();
 
         tasksCv.notify_one();
@@ -77,7 +39,7 @@ public:
     void wait(const size_t taskId) {
         std::unique_lock<std::mutex> tasksInfoLock(tasksInfoMtx);
         tasksInfoCv.wait(tasksInfoLock, [this, taskId]()->bool {
-            return taskId < newTaskId && tasksInfo[taskId].status == TaskStatus::COMPLETED;
+            return taskId < newTaskId && tasksInfo[taskId].status == TaskInfo::TaskStatus::COMPLETED;
             });
     }
 
@@ -99,12 +61,12 @@ public:
 
     bool isRunning(const size_t taskId) {
         std::unique_lock<std::mutex> tasksInfoLock(tasksInfoMtx);
-        return taskId < newTaskId && tasksInfo[taskId].status == TaskStatus::RUNNING;
+        return taskId < newTaskId && tasksInfo[taskId].status == TaskInfo::TaskStatus::RUNNING;
     }
 
     bool isCompleted(const size_t taskId) {
         std::unique_lock<std::mutex> tasksInfoLock(tasksInfoMtx);
-        return taskId < newTaskId && tasksInfo[taskId].status == TaskStatus::COMPLETED;
+        return taskId < newTaskId && tasksInfo[taskId].status == TaskInfo::TaskStatus::COMPLETED;
     }
 
     ~ThreadPool() {
@@ -134,11 +96,16 @@ private:
             if (optionalTask) {
                 const Task& task = *optionalTask;
                 const size_t taskId = task.id();
-                const std::any& result = task();
 
                 std::unique_lock<std::mutex> tasksInfoLock(tasksInfoMtx);
+                tasksInfo[taskId].status = TaskInfo::TaskStatus::RUNNING;
+                tasksInfoLock.unlock();
+                
+                const std::any& result = task();
+
+                tasksInfoLock.lock();
                 tasksInfo[taskId].result = result;
-                tasksInfo[taskId].status = TaskStatus::COMPLETED;
+                tasksInfo[taskId].status = TaskInfo::TaskStatus::COMPLETED;
                 ++nCompletedTasks;
                 tasksInfoLock.unlock();
 
@@ -147,6 +114,44 @@ private:
 
         }
     }
+
+    class Task {
+    public:
+        template <typename ReturnType, typename ...Types, typename ...Args>
+        Task(const size_t id, ReturnType(*function)(Types...), Args&&... args) : _id(id) {
+            if constexpr (std::is_void_v<ReturnType>) {
+                const std::function<void()>& voidFunction = std::bind(function, args...);
+                _function = [voidFunction]() {
+                    voidFunction();
+                    return std::any();
+                };
+            }
+            else {
+                _function = std::bind(function, args...);
+            }
+        }
+
+        std::any operator() () const {
+            return _function();
+        }
+
+        size_t id() const {
+            return _id;
+        }
+
+    private:
+        size_t _id;
+        std::function<std::any()> _function;
+    };
+
+    struct TaskInfo {
+        enum TaskStatus {
+            NEW,
+            RUNNING,
+            COMPLETED
+        } status;
+        std::any result;
+    };
 
     std::vector<std::thread> threads;
 
@@ -196,7 +201,7 @@ int main() {
     t.wait(1);
     std::cout << c << std::endl;
 
-    t.waitAll(); // waiting for task with id 2
+    //t.waitAll(); // waiting for task with id 2
 
     std::cout << "All tasks completed..." << std::endl;
 
