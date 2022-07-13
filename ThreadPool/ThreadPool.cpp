@@ -17,15 +17,15 @@
 
 class Task {
 public:
-    template <typename FuncRetType, typename ...Args, typename ...FuncTypes>
-    Task(FuncRetType(*func)(FuncTypes...), Args&&... args) : isVoid{ std::is_void_v<FuncRetType> } {
-        if constexpr (std::is_void_v<FuncRetType>) {
-            voidFunction = std::bind(func, args...);
+    template <typename ReturnType, typename ...Types, typename ...Args>
+    Task(ReturnType(*function)(Types...), Args&&... args) : isVoid{ std::is_void_v<ReturnType> } {
+        if constexpr (std::is_void_v<ReturnType>) {
+            voidFunction = std::bind(function, args...);
             anyFunction = []()->int { return 0; };
         }
         else {
             voidFunction = []()->void {};
-            anyFunction = std::bind(func, args...);
+            anyFunction = std::bind(function, args...);
         }
     }
 
@@ -72,8 +72,8 @@ public:
         }
     }
 
-    template <typename Func, typename ...Args, typename ...FuncTypes>
-    size_t addTask(Func(*func)(FuncTypes...), Args&&... args) {
+    template <typename ReturnType, typename ...Types, typename ...Args>
+    size_t addTask(ReturnType(*function)(Types...), Args&&... args) {
         const size_t taskId = newTaskId++;
 
         std::unique_lock<std::mutex> tasksInfoLock(tasksInfoMtx);
@@ -81,7 +81,7 @@ public:
         tasksInfoLock.unlock();
 
         std::unique_lock<std::mutex> tasksLock(tasksMtx);
-        tasks.emplace(Task(func, std::forward<Args>(args)...), taskId);
+        tasks.emplace(Task(function, std::forward<Args>(args)...), taskId);
         tasksLock.unlock();
         tasksCv.notify_one();
 
