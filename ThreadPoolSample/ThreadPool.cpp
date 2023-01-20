@@ -25,9 +25,9 @@ int main() {
 	// std::bind
     mep::ThreadPool::TaskId task0 = threadPool.addTask(std::bind(intSum, 2, 3));
 	// lambda
-	mep::ThreadPool::TaskId task1 = threadPool.addVoidTask([&task1Result]() { voidSum(task1Result, 4, 6); });
+	mep::ThreadPool::TaskId task1 = threadPool.addTask([&task1Result]() { voidSum(task1Result, 4, 6); });
 	// function
-	mep::ThreadPool::TaskId task2 = threadPool.addVoidTask(voidWithoutArgument);
+	mep::ThreadPool::TaskId task2 = threadPool.addTask(voidWithoutArgument);
 
     {
         mep::ThreadPool::WaitingResult waitingResult = threadPool.waitResult(task0);

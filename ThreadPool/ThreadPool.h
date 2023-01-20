@@ -19,6 +19,12 @@
 
 namespace mep {
 
+	template<typename T>
+	concept AnyFunction = std::convertible_to<T, std::function<std::any()>>;
+
+	template<typename T>
+	concept VoidFunction = std::convertible_to<T, std::function<void()>> && !AnyFunction<T>;
+
 	/// \brief Класс ThreadPool
 	/// \details Класс - описание пула потоков
 	class ThreadPool {
@@ -119,9 +125,9 @@ namespace mep {
 
 			// Отмена всех существующих задач, которые не были выполнены
 			std::unique_lock<std::mutex> tasksInfoLock(_tasksInfoMtx);
-			for (auto it = _tasksInfo.begin(); it != _tasksInfo.end(); ++it) {
-				if (it->second.status != TaskStatus::COMPLETED) {
-					it->second.status = TaskStatus::CANCELED;
+			for (auto& taskInfo : _tasksInfo) {
+				if (taskInfo.second.status != TaskStatus::COMPLETED) {
+					taskInfo.second.status = TaskStatus::CANCELED;
 					++_totalFinalizedTasks;
 				}
 			}
@@ -130,13 +136,13 @@ namespace mep {
 			_tasksInfoCv.notify_all();
 
 			// Дожидаемся завершения работы всех потоков
-			for (size_t i = 0; i < _threads.size(); ++i) {
-				_threads[i].join();
+			for (std::thread& thread : _threads) {
+				thread.join();
 			}
 
 			// Очищаем контейнеры
 			_tasksInfo.clear();
-			while (_tasks.size()) {
+			while (!_tasks.empty()) {
 				_tasks.pop();
 			}
 			_threads.clear();
@@ -160,7 +166,8 @@ namespace mep {
 		/// Добавление задачи в очередь
 		/// \param[in] function - функция, которую нужно выполнить
 		/// \return ID добавленной задачи
-		TaskId addTask(const std::function<std::any()>& function) {
+		template<AnyFunction Function>
+		TaskId addTask(const Function& function) {
 			if (_state == ThreadPoolState::WORKING) {
 				// Выдаем новый ID
 				TaskId taskId = _newTaskId++;
@@ -186,10 +193,11 @@ namespace mep {
 			}
 		}
 
-		/// Добавление задачи, которая ничего не возвращает в очередь
+		/// Добавление задачи в очередь
 		/// \param[in] function - функция, которую нужно выполнить
 		/// \return ID добавленной задачи
-		TaskId addVoidTask(const std::function<void()>& function) {
+		template<VoidFunction Function>
+		TaskId addTask(const Function& function) {
 			return addTask([function]() {
 				function();
 				return std::any();
@@ -536,35 +544,35 @@ namespace mep {
 			return _tasksInfo.at(taskId).status;
 		}
 
-		/// Неблокирующая проверка статуса задачи (создана)
+		/// Неблокирующая проверка статуса задачи (Задача создана и добавлена в очередь)
 		/// \param[in] taskId - ID задачи, статус которой проверяется
 		/// \return Результат проверки
 		bool created(const TaskId& taskId) const {
 			return status(taskId) == TaskStatus::CREATED;
 		}
 
-		/// Неблокирующая проверка статуса задачи (выполняется)
+		/// Неблокирующая проверка статуса задачи (Задача выполняется)
 		/// \param[in] taskId - ID задачи, статус которой проверяется
 		/// \return Результат проверки
 		bool started(const TaskId& taskId) const {
 			return status(taskId) == TaskStatus::STARTED;
 		}
 
-		/// Неблокирующая проверка статуса задачи (выполнена)
+		/// Неблокирующая проверка статуса задачи (Задача выполнена)
 		/// \param[in] taskId - ID задачи, статус которой проверяется
 		/// \return Результат проверки
 		bool completed(const TaskId& taskId) const {
 			return status(taskId) == TaskStatus::COMPLETED;
 		}
 
-		/// Неблокирующая проверка статуса задачи (отменена)
+		/// Неблокирующая проверка статуса задачи (Задача отменена)
 		/// \param[in] taskId - ID задачи, статус которой проверяется
 		/// \return Результат проверки
 		bool canceled(const TaskId& taskId) const {
 			return status(taskId) == TaskStatus::CANCELED;
 		}
 
-		/// Неблокирующая проверка статуса задачи (завершена)
+		/// Неблокирующая проверка статуса задачи (Задача завершена)
 		/// \param[in] taskId - ID задачи, статус которой проверяется
 		/// \return Результат проверки
 		bool finalized(const TaskId& taskId) const {
