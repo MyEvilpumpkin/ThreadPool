@@ -3,40 +3,44 @@
 
 #include "ThreadPool.h"
 
-int int_sum(int a, int b) {
+int intSum(int a, int b) {
     return a + b;
 }
 
-void void_sum(int& c, int a, int b) {
+void voidSum(int& c, int a, int b) {
     c = a + b;
 }
 
-void void_without_argument() {
+void voidWithoutArgument() {
     std::this_thread::sleep_for(std::chrono::milliseconds(2000));
     std::cout << "It's OK!" << std::endl;
 }
 
 int main() {
-    ThreadPool t(3);
-    int c;
-    t.addTask(int_sum, 2, 3);               // id = 0
-    t.addTask(void_sum, std::ref(c), 4, 6); // id = 1
-    t.addTask(void_without_argument);       // id = 2
+    mep::ThreadPool threadPool;
+	threadPool.start(3);
+
+    int task1Result;
+
+	// std::bind
+    mep::ThreadPool::TaskId task0 = threadPool.addTask(std::bind(intSum, 2, 3));
+	// lambda
+	mep::ThreadPool::TaskId task1 = threadPool.addVoidTask([&task1Result]() { voidSum(task1Result, 4, 6); });
+	// function
+	mep::ThreadPool::TaskId task2 = threadPool.addVoidTask(voidWithoutArgument);
 
     {
-        // variant 1
-        int res;
-        t.waitResult(0, res);
-        std::cout << res << std::endl;
-
-        // variant 2
-        std::cout << std::any_cast<int>(t.waitResult(0)) << std::endl;
+        mep::ThreadPool::WaitingResult waitingResult = threadPool.waitResult(task0);
+        std::cout << std::any_cast<int>(waitingResult.taskInfo->result) << std::endl;
     }
 
-    t.wait(1);
-    std::cout << c << std::endl;
+	{
+		threadPool.wait(1); // Using a raw int instead of a TaskId is not recommended
+		std::cout << task1Result << std::endl;
+	}
 
-    t.waitAll(); // waiting for task with id 2
+
+    threadPool.waitAll(); // waiting for task2
 
     std::cout << "All tasks completed..." << std::endl;
 
